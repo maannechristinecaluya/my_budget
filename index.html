@@ -559,9 +559,22 @@ async function loadFromNotion(){
       const pg=tp.find(x=>(x.properties.Name?.title||[]).map(t=>t.plain_text).join('')==='trackers');
       if(pg){trkPageId=pg.id;const data=JSON.parse(ptxt(pg.properties.Data)||'null');
         if(data)trk=Object.assign(JSON.parse(JSON.stringify(DEFAULT_TRK)),data);}
+      else saveTrackers(); // first connection: upload this device's bills, debts, accounts
     }catch(e){console.warn('Tracker sync skipped',e);}
     saveLocal(); setSyncStatus('ok'); render();
+    pushLocalOnly();
   }catch(e){console.error('Notion sync failed:',e);setSyncStatus('error');}
+}
+let pushing=false;
+async function pushLocalOnly(){
+  if(pushing)return;pushing=true;
+  try{
+    for(const k of MKEYS)for(const t of extraTx[k]||[])if(!t._nid){t._nid=await notionCreate(t,k);t.id=t._nid;}
+    const planMonths=await notionQueryAll(NOTION.planDbId).then(r=>new Set(r.map(p=>p.properties.Month?.select?.name)));
+    for(const k of Object.keys(customSubcat))if(!planMonths.has(k))await notionSaveBudgetPlan(k);
+    saveLocal();
+  }catch(e){console.warn('Upload of local items failed',e);}
+  pushing=false;
 }
 function setSyncStatus(state){
   const el=document.getElementById('sync-status');if(!el)return;
