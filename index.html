@@ -286,7 +286,7 @@ table.txt tr:hover td,.sptable tr:hover td{background:#FCF7F5;}
   <div class="hdr-top">
     <div class="logo">
       <div class="logo-icon">🌿</div>
-      <div><h1>My Budget Tracker</h1><p>Philippine Peso (&#8369;) &middot; 2027</p></div>
+      <div><h1>My Budget Tracker</h1><p>Philippine Peso (&#8369;) &middot; Nov 2026 – Dec 2027</p></div>
     </div>
     <div class="hdr-right">
       <div id="sync-status" style="display:flex;align-items:center;padding:4px 10px;background:rgba(255,255,255,.1);border-radius:8px"><span style="color:rgba(255,255,255,.5);font-size:11px;font-weight:600">☁️ Loading…</span></div>
@@ -356,16 +356,23 @@ const NOTION = {
 };
 
 const MONTHS = [
+  {key:"11-Nov-26",name:"Nov 2026",num:11,year:2026,short:"Nov '26"},{key:"12-Dec-26",name:"Dec 2026",num:12,year:2026,short:"Dec '26"},
   {key:"01-Jan",name:"January",num:1},{key:"02-Feb",name:"February",num:2},
   {key:"03-Mar",name:"March",num:3},{key:"04-Apr",name:"April",num:4},
   {key:"05-May",name:"May",num:5},{key:"06-Jun",name:"June",num:6},
   {key:"07-Jul",name:"July",num:7},{key:"08-Aug",name:"August",num:8},
   {key:"09-Sep",name:"September",num:9},{key:"10-Oct",name:"October",num:10},
   {key:"11-Nov",name:"November",num:11},{key:"12-Dec",name:"December",num:12},
-];
+].map(m=>Object.assign({year:YEAR,short:m.name.slice(0,3)},m));
+const LAST = MONTHS.length-1;  // index of the last month (Dec 2027)
+const CAL_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const PERIOD = "Nov 2026 – Dec 2027";
+// month key for a date like 2026-11-05 (null if outside the tracker)
+const pad=n=>String(n).padStart(2,'0');
+function keyForDate(date){const y=+String(date).slice(0,4),m=+String(date).slice(5,7);const f=MONTHS.find(x=>x.year===y&&x.num===m);return f?f.key:null;}
 const MKEYS = MONTHS.map(m=>m.key);
 const MNAME = Object.fromEntries(MONTHS.map(m=>[m.key,m.name]));
-const MSHORT = MONTHS.map(m=>m.name.slice(0,3));
+const MSHORT = MONTHS.map(m=>m.short);
 const CATS = ["Income","Expenses","Bills & Subscriptions","Savings","Investments","Debts"];
 const OUT_CATS = ["Expenses","Bills & Subscriptions","Debts","Savings","Investments"];
 const DERIVED = ["Bills & Subscriptions","Debts"]; // budget comes from Bills / Debts tabs
@@ -440,7 +447,7 @@ let editingPanels=new Set();
 let trkPageId=null;
 let lastAccount='';
 
-function defaultMonthKey(){const d=new Date();return d.getFullYear()===YEAR?MKEYS[d.getMonth()]:MKEYS[0];}
+function defaultMonthKey(){const d=new Date();return keyForDate(`${d.getFullYear()}-${pad(d.getMonth()+1)}`)||(d>new Date(MONTHS[LAST].year,11,31)?MKEYS[LAST]:MKEYS[0]);}
 const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-3);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const jsq=s=>esc(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
@@ -449,7 +456,6 @@ const fmtS=n=>(n<0?'-':'')+fmt(n);
 const fmt0=n=>'₱'+Math.round(n||0).toLocaleString('en-PH');
 const clamp=(v,a,b)=>Math.min(Math.max(v,a),b);
 const fdate=d=>{try{return new Date(d+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'});}catch{return d;}};
-const pad=n=>String(n).padStart(2,'0');
 const today0=()=>{const d=new Date();d.setHours(0,0,0,0);return d;};
 const acctLabel=a=>a.name+(a.purpose?' – '+a.purpose:'');
 
@@ -472,13 +478,38 @@ function loadLocal(){
 // NOTION SYNC
 // ═══════════════════════════════════════════════
 const notionOn=()=>!!(NOTION.proxyUrl&&NOTION.dbId);
-async function _notionFetch(path,method='GET',body=null){
-  const opts={method,headers:{'Content-Type':'application/json'}};
-  if(body)opts.body=JSON.stringify(body);
-  const r=await fetch(`${NOTION.proxyUrl}/notion/${path}`,opts);
-  if(!r.ok)throw new Error('Notion API error: '+r.status);
-  return r.json();
+// One request at a time, with a short gap, and retry when Notion says "slow down" (429) —
+// Notion allows about 3 requests per second.
+let _nq=Promise.resolve();
+function _notionFetch(path,method='GET',body=null){
+  const run=async()=>{
+    const opts={method,headers:{'Content-Type':'application/json'}};
+    if(body)opts.body=JSON.stringify(body);
+    for(let attempt=0;;attempt++){
+      let r;
+      try{r=await fetch(`${NOTION.proxyUrl}/notion/${path}`,opts);}
+      catch(e){if(attempt<3){await sleep(1000*(attempt+1));continue;}throw e;}
+      if(r.ok){await sleep(340);return r.json();}
+      if((r.status===429||r.status>=500)&&attempt<5){
+        const ra=parseFloat(r.headers.get('Retry-After'))||(1+attempt);await sleep(ra*1000);continue;}
+      throw new Error('Notion API error: '+r.status);
+    }
+  };
+  const p=_nq.then(run,run);_nq=p.catch(()=>{});return p;
 }
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// Plan months edited on this device that Notion hasn't confirmed yet.
+const DIRTY_KEY='mybudget2027_dirtyplans';
+let dirtyPlans=new Set();
+try{dirtyPlans=new Set(JSON.parse(localStorage.getItem(DIRTY_KEY)||'[]'));}catch(e){}
+// One-time: plans edited before this fix may be half-saved in Notion, so treat this device's copy as the latest.
+try{if(!localStorage.getItem('mybudget2027_planfix1')){
+  const raw=JSON.parse(localStorage.getItem('mybudget2027_v1')||'null');
+  if(raw&&raw.customSubcat)Object.keys(raw.customSubcat).forEach(k=>dirtyPlans.add(k));
+  localStorage.setItem('mybudget2027_planfix1','1');}}catch(e){}
+function saveDirty(){try{localStorage.setItem(DIRTY_KEY,JSON.stringify([...dirtyPlans]));}catch(e){}}
+let trkDirty=false;try{trkDirty=localStorage.getItem('mybudget2027_trkdirty')==='1';}catch(e){}
+function setTrkDirty(v){trkDirty=v;try{localStorage.setItem('mybudget2027_trkdirty',v?'1':'0');}catch(e){}}
 async function notionQueryAll(dbId){
   let results=[],cursor=null;
   do{
@@ -502,20 +533,24 @@ async function notionCreate(tx,monthKey){
 }
 async function notionArchive(id){await _notionFetch(`pages/${id}`,'PATCH',{archived:true});}
 async function notionSaveBudgetPlan(key){
-  const existing=await notionQueryAll(NOTION.planDbId);
-  await Promise.all(existing.filter(p=>p.properties.Month?.select?.name===key).map(p=>notionArchive(p.id)));
-  const pages=[];
-  for(const cat of CATS){
-    if(DERIVED.includes(cat))continue;
-    for(const s of getSubcats(key,cat)){ if(!s.n)continue;
-      pages.push({parent:{database_id:NOTION.planDbId},properties:{'Name':{title:rt(s.n)},'Month':{select:{name:key}},'Category':{select:{name:cat}},'Budget':{number:s.b||0}}});
+  dirtyPlans.add(key);saveDirty();
+  setSyncStatus('syncing');
+  try{
+    const existing=(await notionQueryAll(NOTION.planDbId)).filter(p=>p.properties.Month?.select?.name===key);
+    // add the new rows first, then remove the old ones — a failure never leaves the month empty
+    for(const cat of CATS){
+      if(DERIVED.includes(cat))continue;
+      for(const s of getSubcats(key,cat)){ if(!s.n)continue;
+        await _notionFetch('pages','POST',{parent:{database_id:NOTION.planDbId},properties:{'Name':{title:rt(s.n)},'Month':{select:{name:key}},'Category':{select:{name:cat}},'Budget':{number:s.b||0}}});
+      }
     }
-  }
-  await Promise.all(pages.map(p=>_notionFetch('pages','POST',p)));
+    for(const p of existing)await notionArchive(p.id);
+    dirtyPlans.delete(key);saveDirty();setSyncStatus('ok');
+  }catch(e){setSyncStatus('error');throw e;}
 }
 let trkTimer=null;
 function saveTrackers(){
-  saveLocal();
+  saveLocal();setTrkDirty(true);
   if(!notionOn()||!NOTION.trkDbId)return;
   clearTimeout(trkTimer);
   trkTimer=setTimeout(async()=>{
@@ -525,7 +560,7 @@ function saveTrackers(){
       const props={'Name':{title:rt('trackers')},'Data':{rich_text:chunks.slice(0,100)}};
       if(trkPageId) await _notionFetch(`pages/${trkPageId}`,'PATCH',{properties:props});
       else { const p=await _notionFetch('pages','POST',{parent:{database_id:NOTION.trkDbId},properties:props}); trkPageId=p.id; }
-      setSyncStatus('ok');
+      setTrkDirty(false);setSyncStatus('ok');
     }catch(e){setSyncStatus('error');}
   },1200);
 }
@@ -552,14 +587,15 @@ async function loadFromNotion(){
         const p=page.properties,m=p.Month?.select?.name,c=p.Category?.select?.name,n=(p.Name?.title||[]).map(t=>t.plain_text).join('');
         if(!m||!c||!n)continue; ((map[m]=map[m]||{})[c]=map[m][c]||[]).push({n,b:p.Budget?.number||0});
       }
-      for(const [m,cats] of Object.entries(map))customSubcat[m]=cats;
+      for(const [m,cats] of Object.entries(map))if(!dirtyPlans.has(m))customSubcat[m]=cats;
     }catch(e){console.warn('Plan sync skipped',e);}
     try{
       const tp=await notionQueryAll(NOTION.trkDbId);
       const pg=tp.find(x=>(x.properties.Name?.title||[]).map(t=>t.plain_text).join('')==='trackers');
-      if(pg){trkPageId=pg.id;const data=JSON.parse(ptxt(pg.properties.Data)||'null');
+      if(pg)trkPageId=pg.id;
+      if(pg&&!trkDirty){const data=JSON.parse(ptxt(pg.properties.Data)||'null');
         if(data)trk=Object.assign(JSON.parse(JSON.stringify(DEFAULT_TRK)),data);}
-      else saveTrackers(); // first connection: upload this device's bills, debts, accounts
+      else saveTrackers(); // first connection, or this device has unsaved changes: upload them // first connection: upload this device's bills, debts, accounts
     }catch(e){console.warn('Tracker sync skipped',e);}
     saveLocal(); setSyncStatus('ok'); render();
     pushLocalOnly();
@@ -571,7 +607,7 @@ async function pushLocalOnly(){
   try{
     for(const k of MKEYS)for(const t of extraTx[k]||[])if(!t._nid){t._nid=await notionCreate(t,k);t.id=t._nid;}
     const planMonths=await notionQueryAll(NOTION.planDbId).then(r=>new Set(r.map(p=>p.properties.Month?.select?.name)));
-    for(const k of Object.keys(customSubcat))if(!planMonths.has(k))await notionSaveBudgetPlan(k);
+    for(const k of Object.keys(customSubcat))if(!planMonths.has(k)||dirtyPlans.has(k))await notionSaveBudgetPlan(k);
     saveLocal();
   }catch(e){console.warn('Upload of local items failed',e);}
   pushing=false;
@@ -587,7 +623,7 @@ function setSyncStatus(state){
 // DATA HELPERS
 // ═══════════════════════════════════════════════
 function monthIdx(key){return MKEYS.indexOf(key);}
-function billsDue(mi){return trk.bills.filter(b=>(b.months||[]).includes(mi+1));}
+function billsDue(mi){return trk.bills.filter(b=>(b.months||[]).includes(MONTHS[mi].num));}
 function getSubcats(key,cat){
   const mi=monthIdx(key);
   if(cat==='Bills & Subscriptions')return billsDue(mi).map(b=>({n:b.name,b:b.amount}));
@@ -614,8 +650,8 @@ function computeStartingBalance(key){
   for(const k of MKEYS){ if(k===key)break; const a=computeActuals(k); bal+=a['Income'].total-outflow(a); }
   return bal;
 }
-// account balance through end of month index mi (11 = whole year)
-function accountBalance(acct,mi=11){
+// account balance through end of month index mi (LAST = whole period)
+function accountBalance(acct,mi=LAST){
   let bal=+acct.opening||0;
   for(let i=0;i<=mi;i++)for(const t of extraTx[MKEYS[i]]||[]){
     if(t.account===acct.name) bal+= t.category==='Income'?t.amount:-t.amount;
@@ -627,17 +663,17 @@ function paidFor(name,cat,mi){
   return (extraTx[MKEYS[mi]]||[]).filter(t=>t.category===cat&&t.subcategory===name).reduce((s,t)=>s+t.amount,0);
 }
 function debtPaidThrough(d,mi){let s=0;for(let i=0;i<=mi;i++)s+=paidFor(d.name,'Debts',i);return s;}
-function debtBalance(d,mi=11){return Math.max(0,(+d.startBal||0)+(+d.charges||0)-debtPaidThrough(d,mi));}
-function curMonthIdx(){const d=new Date();if(d.getFullYear()<YEAR)return -1;if(d.getFullYear()>YEAR)return 12;return d.getMonth();}
+function debtBalance(d,mi=LAST){return Math.max(0,(+d.startBal||0)+(+d.charges||0)-debtPaidThrough(d,mi));}
+function curMonthIdx(){const d=new Date(),k=keyForDate(`${d.getFullYear()}-${pad(d.getMonth()+1)}`);if(k)return MKEYS.indexOf(k);return d<new Date(MONTHS[0].year,MONTHS[0].num-1,1)?-1:LAST+1;}
 function payoff(d){
   const B=debtBalance(d); if(B<=0)return {done:true};
   const P=+d.pay||0, r=(+d.rate||0)/100;
   if(P<=0)return {n:null};
   let n; if(r>0){ if(P<=B*r)return {never:true}; n=Math.ceil(-Math.log(1-r*B/P)/Math.log(1+r)); } else n=Math.ceil(B/P);
-  const base=curMonthIdx()<0?new Date(YEAR,0,1):new Date(new Date().getFullYear(),new Date().getMonth(),1);
+  const base=curMonthIdx()<0?new Date(MONTHS[0].year,MONTHS[0].num-1,1):new Date(new Date().getFullYear(),new Date().getMonth(),1);
   return {n,date:new Date(base.getFullYear(),base.getMonth()+n,1)};
 }
-function lastDataIdx(){const c=curMonthIdx();let last=-1;MKEYS.forEach((k,i)=>{if((extraTx[k]||[]).length)last=i;});return clamp(Math.max(c,last,0),0,11);}
+function lastDataIdx(){const c=curMonthIdx();let last=-1;MKEYS.forEach((k,i)=>{if((extraTx[k]||[]).length)last=i;});return clamp(Math.max(c,last,0),0,LAST);}
 const ord=n=>n+((n%100>=11&&n%100<=13)?'th':(['th','st','nd','rd'][n%10]||'th'));
 function newChart(ctx,cfg){const ex=Chart.getChart(ctx);if(ex)ex.destroy();return new Chart(ctx,cfg);}
 
@@ -830,18 +866,18 @@ function renderMonthly(){
   setTimeout(()=>{makeBarChart('ch-bar',actuals,budgets);makeDonut('ch-dnt',actuals);},50);
 }
 function renderUpcomingStrip(mi){
-  const items=glanceItems().filter(it=>it.months.includes(mi+1)).map(it=>({...it,st:cellStatus(it,mi)})).filter(x=>['over','soon','up','partial'].includes(x.st.cls));
+  const items=glanceItems().filter(it=>it.months.includes(MONTHS[mi].num)).map(it=>({...it,st:cellStatus(it,mi)})).filter(x=>['over','soon','up','partial'].includes(x.st.cls));
   if(!items.length)return '';
   items.sort((a,b)=>a.dueDay-b.dueDay);
-  return `<div class="quote">🌸 <div style="flex:1"><b>Still to pay this month:</b> ${items.slice(0,8).map(x=>`${x.st.cls==='over'?'⚠️ ':''}${esc(x.name)} <span style="color:var(--txm)">(${MSHORT[mi]} ${x.dueDay})</span>`).join(' · ')}${items.length>8?` · +${items.length-8} more`:''}</div><button class="obtn" onclick="setView('bills')">Bills ›</button></div>`;
+  return `<div class="quote">🌸 <div style="flex:1"><b>Still to pay this month:</b> ${items.slice(0,8).map(x=>`${x.st.cls==='over'?'⚠️ ':''}${esc(x.name)} <span style="color:var(--txm)">(${CAL_SHORT[MONTHS[mi].num-1]} ${x.dueDay})</span>`).join(' · ')}${items.length>8?` · +${items.length-8} more`:''}</div><button class="obtn" onclick="setView('bills')">Bills ›</button></div>`;
 }
 function renderYTD(){
   const totA={},totB={};for(const c of [...CATS,'Transfer']){totA[c]={total:0,subs:{}};totB[c]=0;}
   for(const k of MKEYS){const a=computeActuals(k),b=computeBudgets(k);for(const c of CATS){totA[c].total+=a[c].total;totB[c]+=b[c];}}
   const monthsWithData=MKEYS.filter(k=>(extraTx[k]||[]).length).length;
   document.getElementById('main').innerHTML=`
-    <div class="ytd-ttl">YEAR-TO-DATE OVERVIEW &middot; ${monthsWithData} MONTH${monthsWithData===1?'':'S'} WITH DATA</div>
-    ${renderCards(totA,totB,openingCash(),'Opening balances, Jan 1')}
+    <div class="ytd-ttl">OVERVIEW · ${PERIOD} &middot; ${monthsWithData} MONTH${monthsWithData===1?'':'S'} WITH DATA</div>
+    ${renderCards(totA,totB,openingCash(),'Opening balances, Nov 1, 2026')}
     <div class="ccrd fw" style="margin-bottom:22px"><div class="ctitle">Monthly Trend</div><div class="csub2">Income, spending and savings across all months</div><div class="cwrap" style="height:260px"><canvas id="ch-trend"></canvas></div></div>
     <div class="crow" style="margin-bottom:22px">
       <div class="ccrd"><div class="ctitle">YTD Budget vs. Actual</div><div class="csub2">Cumulative across all months</div><div class="cwrap" style="height:220px"><canvas id="ch-bar-ytd"></canvas></div></div>
@@ -893,7 +929,7 @@ function renderPlanner(){
     </div>
     <div class="plan-save-row">
       <button class="plan-reset-btn" onclick="resetPlan('${key}')">&#8617; Reset to Default</button>
-      ${idx<11?`<button class="plan-copy-btn" onclick="copyPlanForward('${key}')">&#128203; Copy to ${MONTHS[idx+1].name}–December</button>`:''}
+      ${idx<LAST?`<button class="plan-copy-btn" onclick="copyPlanForward('${key}')">&#128203; Copy to ${MONTHS[idx+1].short}–Dec 2027</button>`:''}
       <button class="plan-save-btn" onclick="savePlan('${key}')">&#128190; Save Plan</button>
     </div>`;
 }
@@ -922,9 +958,9 @@ function glanceItems(){
     ...trk.debts.filter(d=>(+d.pay||0)>0).map(d=>({kind:'debt',id:d.id,name:d.name,cat:'Debts',amount:+d.pay||0,dueDay:+d.dueDay||28,months:ALL12,debt:d}))
   ];
 }
-function dueDate(mi,day){return new Date(YEAR,mi,Math.min(day,new Date(YEAR,mi+1,0).getDate()));}
+function dueDate(mi,day){const m=MONTHS[mi];return new Date(m.year,m.num-1,Math.min(day,new Date(m.year,m.num,0).getDate()));}
 function cellStatus(it,mi){
-  const paid=paidFor(it.name,it.cat,mi),due=it.months.includes(mi+1);
+  const paid=paidFor(it.name,it.cat,mi),due=it.months.includes(MONTHS[mi].num);
   if(it.kind==='debt'&&paid===0&&debtBalance(it.debt,mi-1)<=0&&(+it.debt.startBal||0)>0)return {cls:'na',paid};
   if(!due&&paid<=0)return {cls:'na',paid};
   if(paid>0)return {cls:paid>=it.amount*0.98?'paid':'partial',paid};
@@ -934,14 +970,14 @@ function cellStatus(it,mi){
 const ICON={paid:'✅',partial:'🟡',over:'⚠️',soon:'⏰',up:'⏳',na:'—'};
 const k1=n=>n>=1000?(n/1000).toFixed(n%1000?1:0)+'K':Math.round(n);
 function renderBills(){
-  const items=glanceItems(),cur=curMonthIdx(),ci=clamp(cur,0,11);
+  const items=glanceItems(),cur=curMonthIdx(),ci=clamp(cur,0,LAST);
   let exp=0,paid=0,thisDue=0,over=0,overAmt=0;
-  const monthExp=Array(12).fill(0),monthPaid=Array(12).fill(0);
+  const monthExp=Array(MONTHS.length).fill(0),monthPaid=Array(MONTHS.length).fill(0);
   const rowHtml=list=>list.map(it=>{
     let rExp=0,rPaid=0;
     const cells=MKEYS.map((k,mi)=>{
       const st=cellStatus(it,mi);
-      if(it.months.includes(mi+1)&&st.cls!=='na'){rExp+=it.amount;monthExp[mi]+=it.amount;}
+      if(it.months.includes(MONTHS[mi].num)&&st.cls!=='na'){rExp+=it.amount;monthExp[mi]+=it.amount;}
       rPaid+=st.paid;monthPaid[mi]+=st.paid;
       if(st.cls==='over'){over++;overAmt+=it.amount-st.paid;}
       if(mi===ci&&['up','soon','over','partial'].includes(st.cls))thisDue+=it.amount-st.paid;
@@ -952,23 +988,23 @@ function renderBills(){
         :`<td><button class="yc st-${st.cls}" title="${esc(t)} — click to record payment" onclick="payItem('${it.kind}','${it.id}',${mi})">${ICON[st.cls]}<small>${label}</small></button></td>`;
     }).join('');
     exp+=rExp;paid+=rPaid;
-    const meta=it.kind==='bill'?`Due every ${ord(it.dueDay)}${it.months.length<12?' · '+it.months.map(m=>MSHORT[m-1]).join(', '):''}`:`Due every ${ord(it.dueDay)} · ${fmt0(debtBalance(it.debt))} left`;
+    const meta=it.kind==='bill'?`Due every ${ord(it.dueDay)}${it.months.length<12?' · '+it.months.map(m=>CAL_SHORT[m-1]).join(', '):''}`:`Due every ${ord(it.dueDay)} · ${fmt0(debtBalance(it.debt))} left`;
     return `<tr><td class="nm"><div class="nm-t">${esc(it.name)} ${it.autopay?'<span class="chip-auto">auto</span>':''}<button class="nm-ed" title="Edit" onclick="${it.kind==='bill'?`editBill('${it.id}')`:`editDebt('${it.id}')`}">&#9998;</button></div><div class="nm-m">${meta}</div></td>
       <td style="font-weight:700;text-align:right;padding-right:10px">${fmt0(it.amount)}</td>${cells}<td class="tot">${fmt0(rPaid)}<div class="nm-m">of ${fmt0(rExp)}</div></td></tr>`;
   }).join('');
   const bills=items.filter(i=>i.kind==='bill'),debts=items.filter(i=>i.kind==='debt');
-  const body=`<tr class="yg-sec"><td class="nm">📋 Bills &amp; Subscriptions</td><td colspan="14"></td></tr>${rowHtml(bills)}
-    ${debts.length?`<tr class="yg-sec"><td class="nm">💳 Debt Payments</td><td colspan="14"></td></tr>${rowHtml(debts)}`:''}`;
+  const body=`<tr class="yg-sec"><td class="nm">📋 Bills &amp; Subscriptions</td><td colspan="${MONTHS.length+2}"></td></tr>${rowHtml(bills)}
+    ${debts.length?`<tr class="yg-sec"><td class="nm">💳 Debt Payments</td><td colspan="${MONTHS.length+2}"></td></tr>${rowHtml(debts)}`:''}`;
   const upcoming=[];
-  const fromMi=cur<0?0:clamp(cur,0,11);
-  for(let mi=fromMi;mi<12&&upcoming.length<8;mi++)for(const it of items){const st=cellStatus(it,mi);if(['over','soon','up','partial'].includes(st.cls))upcoming.push({it,mi,st,d:dueDate(mi,it.dueDay)});}
+  const fromMi=cur<0?0:clamp(cur,0,LAST);
+  for(let mi=fromMi;mi<=LAST&&upcoming.length<8;mi++)for(const it of items){const st=cellStatus(it,mi);if(['over','soon','up','partial'].includes(st.cls))upcoming.push({it,mi,st,d:dueDate(mi,it.dueDay)});}
   upcoming.sort((a,b)=>a.d-b.d);
   document.getElementById('main').innerHTML=`
-    <div class="sec-hdr"><div><div class="sec-title">🗓️ Bills at a Glance — ${YEAR}</div><div class="sec-hint">Every bill and debt payment for the year. Click any unpaid cell to record the payment.</div></div>
+    <div class="sec-hdr"><div><div class="sec-title">🗓️ Bills at a Glance — ${PERIOD}</div><div class="sec-hint">Every bill and debt payment, month by month. Click any unpaid cell to record the payment.</div></div>
       <div class="btnrow"><button class="abtn" onclick="editBill()">&#65291; Add Bill</button></div></div>
     <div class="sgrid">
-      <div class="card sc"><div class="cicon" style="background:#ECF0F3">📅</div><div class="clabel">Expected ${YEAR}</div><div class="cval">${fmt0(exp)}</div><div class="csub">≈ ${fmt0(exp/12)} a month</div></div>
-      <div class="card sc"><div class="cicon" style="background:#EEF1E8">✅</div><div class="clabel">Paid so far</div><div class="cval pos">${fmt0(paid)}</div><div class="csub">${exp?Math.round(paid/exp*100):0}% of the year</div></div>
+      <div class="card sc"><div class="cicon" style="background:#ECF0F3">📅</div><div class="clabel">Expected ${PERIOD}</div><div class="cval">${fmt0(exp)}</div><div class="csub">≈ ${fmt0(exp/MONTHS.length)} a month</div></div>
+      <div class="card sc"><div class="cicon" style="background:#EEF1E8">✅</div><div class="clabel">Paid so far</div><div class="cval pos">${fmt0(paid)}</div><div class="csub">${exp?Math.round(paid/exp*100):0}% of the total</div></div>
       <div class="card sc"><div class="cicon" style="background:#F5ECE1">⏳</div><div class="clabel">Left to pay in ${MNAME[MKEYS[ci]]}</div><div class="cval">${fmt0(thisDue)}</div><div class="csub">Unpaid bills this month</div></div>
       <div class="card sc" style="${over?'border:2px solid var(--rd)':''}"><div class="cicon" style="background:#F9E6E8">⚠️</div><div class="clabel">Overdue</div><div class="cval ${over?'neg':''}">${over}</div><div class="csub">${over?fmt0(overAmt)+' unpaid':'All caught up 🌸'}</div></div>
       <div class="card sc"><div class="cicon" style="background:#F1ECF5">🔁</div><div class="clabel">On autopay</div><div class="cval">${bills.filter(b=>b.autopay).length}</div><div class="csub">of ${bills.length} bills</div></div>
@@ -991,7 +1027,7 @@ function payItem(kind,id,mi){
   const it=glanceItems().find(x=>x.kind===kind&&x.id===id);if(!it)return;
   const st=cellStatus(it,mi);
   const d=dueDate(mi,it.dueDay);
-  openTxModal(MKEYS[mi],{cat:it.cat,sub:it.name,amount:Math.max(0,it.amount-st.paid),desc:it.name,date:`${YEAR}-${pad(mi+1)}-${pad(d.getDate())}`});
+  openTxModal(MKEYS[mi],{cat:it.cat,sub:it.name,amount:Math.max(0,it.amount-st.paid),desc:it.name,date:`${MONTHS[mi].year}-${pad(MONTHS[mi].num)}-${pad(d.getDate())}`});
 }
 
 // ═══════════════════════════════════════════════
@@ -999,7 +1035,7 @@ function payItem(kind,id,mi){
 // ═══════════════════════════════════════════════
 function renderDebts(){
   const strat=trk.settings.strategy||'avalanche';
-  const list=trk.debts.map(d=>({d,bal:debtBalance(d),paid:debtPaidThrough(d,11),po:payoff(d)}));
+  const list=trk.debts.map(d=>({d,bal:debtBalance(d),paid:debtPaidThrough(d,LAST),po:payoff(d)}));
   const active=list.filter(x=>x.bal>0);
   active.sort((a,b)=>strat==='snowball'?a.bal-b.bal:(b.d.rate-a.d.rate)||(a.bal-b.bal));
   const order=[...active,...list.filter(x=>x.bal<=0)];
@@ -1015,7 +1051,7 @@ function renderDebts(){
       <div class="dc-top"><div><div class="dc-name">${esc(d.name)}</div><div class="dc-meta">${esc(d.type||'Debt')}${d.dueDay?' · due every '+ord(+d.dueDay):''}</div></div></div>
       <div class="dc-bal ${bal<=0?'zero':''}">${unset?'<span style="font-size:14px;color:var(--txm)">Set the starting balance ✏️</span>':fmt(bal)}</div>
       <div class="dc-sub">${unset?'':`remaining of ${fmt0(total)}`}</div>
-      <div class="pbar"><div style="width:${p}%"></div></div><div class="dc-sub">${p}% paid · ${fmt0(paid)} paid in ${YEAR}</div>
+      <div class="pbar"><div style="width:${p}%"></div></div><div class="dc-sub">${p}% paid · ${fmt0(paid)} paid since Nov 2026</div>
       <div class="dc-stats">
         <div class="dc-stat"><div class="l">Monthly payment</div><div class="v">${d.pay?fmt0(d.pay):'—'}</div></div>
         <div class="dc-stat"><div class="l">Interest / month</div><div class="v">${d.rate?d.rate+'%':'0%'}</div></div>
@@ -1024,14 +1060,14 @@ function renderDebts(){
       </div>
       <div class="dc-btns"><button class="pri" onclick="payDebt('${d.id}')">💸 Pay</button><button onclick="addCharge('${d.id}')">＋ Charge</button><button onclick="editDebt('${d.id}')">✏️ Edit</button></div></div>`;
   }).join('');
-  const grid=list.map(({d})=>`<tr><td class="nm"><div class="nm-t">${esc(d.name)}</div></td>${MKEYS.map((k,mi)=>{const v=paidFor(d.name,'Debts',mi);return `<td>${v?`<span class="yc st-paid">${k1(v)}</span>`:'<span class="yc st-na">—</span>'}</td>`;}).join('')}<td class="tot">${fmt0(debtPaidThrough(d,11))}</td></tr>`).join('');
+  const grid=list.map(({d})=>`<tr><td class="nm"><div class="nm-t">${esc(d.name)}</div></td>${MKEYS.map((k,mi)=>{const v=paidFor(d.name,'Debts',mi);return `<td>${v?`<span class="yc st-paid">${k1(v)}</span>`:'<span class="yc st-na">—</span>'}</td>`;}).join('')}<td class="tot">${fmt0(debtPaidThrough(d,LAST))}</td></tr>`).join('');
   document.getElementById('main').innerHTML=`
     <div class="sec-hdr"><div><div class="sec-title">💳 Debt Tracker</div><div class="sec-hint">Payments you log under <b>Debts</b> reduce each balance automatically.</div></div>
       <div class="btnrow"><div class="seg"><button class="${strat==='avalanche'?'on':''}" onclick="setStrategy('avalanche')" title="Highest interest first">🏔️ Avalanche</button><button class="${strat==='snowball'?'on':''}" onclick="setStrategy('snowball')" title="Smallest balance first">⛄ Snowball</button></div>
       <button class="abtn" onclick="editDebt()">&#65291; Add Debt</button></div></div>
     <div class="sgrid">
       <div class="card sc"><div class="cicon" style="background:#F9E6E8">💳</div><div class="clabel">Total Debt Left</div><div class="cval ${totBal>0?'neg':'pos'}">${fmt(totBal)}</div><div class="csub">${active.length} active debt${active.length===1?'':'s'}</div></div>
-      <div class="card sc"><div class="cicon" style="background:#EEF1E8">✅</div><div class="clabel">Paid in ${YEAR}</div><div class="cval pos">${fmt(totPaid)}</div><div class="csub">${pct}% of what you owed</div></div>
+      <div class="card sc"><div class="cicon" style="background:#EEF1E8">✅</div><div class="clabel">Paid since Nov 2026</div><div class="cval pos">${fmt(totPaid)}</div><div class="csub">${pct}% of what you owed</div></div>
       <div class="card sc"><div class="cicon" style="background:#F5ECE1">📆</div><div class="clabel">Monthly Payments</div><div class="cval">${fmt(minPay)}</div><div class="csub">Across active debts</div></div>
       <div class="card sc"><div class="cicon" style="background:#F6E8EC">🎯</div><div class="clabel">Progress</div><div class="cval">${pct}%</div><div class="csub"><div class="pbar" style="flex:1;margin:0"><div style="width:${pct}%"></div></div></div></div>
       <div class="card sc" style="border:2px solid var(--g3)"><div class="cicon" style="background:#F1ECF5">🕊️</div><div class="clabel">Debt-free by</div><div class="cval" style="font-size:19px">${never?'Pay more':freeDate?freeDate.toLocaleDateString('en-PH',{month:'long',year:'numeric'}):totBal<=0&&totStart>0?'Debt-free! 🎉':'—'}</div><div class="csub">At your current payments</div></div>
@@ -1047,7 +1083,7 @@ function renderDebts(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:tip}}},scales:{y:{beginAtZero:true,ticks:{callback:peso,font:{size:10}}},x:{grid:{display:false}}}}});},50);
 }
 function setStrategy(s){trk.settings.strategy=s;saveTrackers();renderDebts();}
-function payDebt(id){const d=trk.debts.find(x=>x.id===id);if(!d)return;const mi=clamp(curMonthIdx(),0,11);
+function payDebt(id){const d=trk.debts.find(x=>x.id===id);if(!d)return;const mi=clamp(curMonthIdx(),0,LAST);
   openTxModal(MKEYS[mi],{cat:'Debts',sub:d.name,amount:Math.min(+d.pay||0,debtBalance(d))||'',desc:d.name+' payment'});}
 function addCharge(id){const d=trk.debts.find(x=>x.id===id);if(!d)return;
   const v=prompt(`Add new charges or interest to ${d.name} (₱). Use a negative number to reduce.`,'');
@@ -1073,7 +1109,7 @@ function renderAccounts(){
     <div class="dgrid" style="grid-template-columns:repeat(${Math.min(4,Math.max(1,accs.length))},1fr)">${accs.map((x,i)=>`
       <div class="dcard"><div class="dc-top"><div><div class="dc-name">${icons[i%icons.length]} ${esc(x.a.name)}</div><div class="dc-meta">${esc(x.a.purpose||'')}</div></div><button class="nm-ed" onclick="editAccount('${x.a.id}')">&#9998;</button></div>
         <div class="dc-bal" style="color:${x.bal>=0?'var(--g1)':'var(--rd)'}">${fmtS(x.bal)}</div><div class="dc-sub">${total>0&&x.bal>0?Math.round(x.bal/total*100)+'% of your cash':''}</div>
-        <div class="dc-stats"><div class="dc-stat"><div class="l">Opening (Jan 1)</div><div class="v">${fmt0(x.a.opening)}</div></div><div class="dc-stat"><div class="l">Money in</div><div class="v" style="color:var(--sage)">+${fmt0(x.inn+x.tin)}</div></div>
+        <div class="dc-stats"><div class="dc-stat"><div class="l">Opening (Nov 1)</div><div class="v">${fmt0(x.a.opening)}</div></div><div class="dc-stat"><div class="l">Money in</div><div class="v" style="color:var(--sage)">+${fmt0(x.inn+x.tin)}</div></div>
         <div class="dc-stat"><div class="l">Money out</div><div class="v" style="color:var(--rd)">−${fmt0(x.out)}</div></div><div class="dc-stat"><div class="l">Transactions</div><div class="v">${allTx().filter(t=>t.account===x.a.name||t.toAccount===x.a.name).length}</div></div></div>
         <div class="dc-btns"><button class="pri" onclick="openTxModal(null,{account:'${jsq(x.a.name)}'})">＋ Transaction</button><button onclick="txSearch='${jsq(x.a.name)}';setView('ytd')">View activity</button></div></div>`).join('')}</div>
     <div class="ccrd"><div class="ctitle">Balances Through the Year</div><div class="csub2">Month-end balance of each account</div><div class="cwrap" style="height:260px"><canvas id="ch-acct"></canvas></div></div>`;
@@ -1082,7 +1118,7 @@ function renderAccounts(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11},boxWidth:10}},tooltip:{callbacks:{label:tip}}},scales:{y:{ticks:{callback:peso,font:{size:10}}},x:{grid:{display:false}}}}});},50);
 }
 function editOpenings(){
-  openForm('✏️ Opening balances (Jan 1, 2027)',trk.accounts.map(a=>({k:a.id,label:acctLabel(a),type:'number'})),
+  openForm('✏️ Opening balances (Nov 1, 2026)',trk.accounts.map(a=>({k:a.id,label:acctLabel(a),type:'number'})),
     Object.fromEntries(trk.accounts.map(a=>[a.id,a.opening||0])),
     v=>{trk.accounts.forEach(a=>a.opening=parseFloat(v[a.id])||0);saveTrackers();showToast('Opening balances saved');render();});
 }
@@ -1098,7 +1134,7 @@ function netWorthAt(mi){
   return {cash,other,debt,liab,assets:cash+other,liabilities:debt+liab,net:cash+other-debt-liab};
 }
 function renderNetWorth(){
-  const now=netWorthAt(11),last=lastDataIdx();
+  const now=netWorthAt(LAST),last=lastDataIdx();
   const start=(()=>{const cash=openingCash(),other=trk.assets.filter(x=>x.type==='Asset').reduce((s,x)=>s+(+x.value||0),0),debt=trk.debts.reduce((s,d)=>s+(+d.startBal||0),0),liab=trk.assets.filter(x=>x.type==='Liability').reduce((s,x)=>s+(+x.value||0),0);return cash+other-debt-liab;})();
   const change=now.net-start;
   const row=(icon,name,val,onclick,sub)=>`<li><div><div class="n">${icon} ${esc(name)}</div>${sub?`<div class="d">${sub}</div>`:''}</div><div><span class="a">${fmt0(val)}</span>${onclick?`<button class="nm-ed" onclick="${onclick}">&#9998;</button>`:''}</div></li>`;
@@ -1106,7 +1142,7 @@ function renderNetWorth(){
     <div class="sec-hdr"><div><div class="sec-title">📈 Net Worth</div><div class="sec-hint">What you own minus what you owe. Accounts and debts update on their own; update other assets now and then.</div></div>
       <div class="btnrow"><button class="abtn" onclick="editAsset()">&#65291; Add Asset / Liability</button></div></div>
     <div class="sgrid" style="grid-template-columns:repeat(4,1fr)">
-      <div class="card sc" style="border:2px solid var(--g3)"><div class="cicon" style="background:#F6E8EC">🌸</div><div class="clabel">Net Worth</div><div class="cval ${now.net>=0?'pos':'neg'}" style="font-size:26px">${fmtS(now.net)}</div><div class="csub"><span class="badge ${change>=0?'bg':'br'}">${change>=0?'▲':'▼'} ${fmt0(Math.abs(change))}</span> since Jan 1</div></div>
+      <div class="card sc" style="border:2px solid var(--g3)"><div class="cicon" style="background:#F6E8EC">🌸</div><div class="clabel">Net Worth</div><div class="cval ${now.net>=0?'pos':'neg'}" style="font-size:26px">${fmtS(now.net)}</div><div class="csub"><span class="badge ${change>=0?'bg':'br'}">${change>=0?'▲':'▼'} ${fmt0(Math.abs(change))}</span> since Nov 1, 2026</div></div>
       <div class="card sc"><div class="cicon" style="background:#EEF1E8">🏦</div><div class="clabel">Total Assets</div><div class="cval pos">${fmt(now.assets)}</div><div class="csub">Cash ${fmt0(now.cash)} · Other ${fmt0(now.other)}</div></div>
       <div class="card sc"><div class="cicon" style="background:#F9E6E8">💳</div><div class="clabel">Total Liabilities</div><div class="cval neg">${fmt(now.liabilities)}</div><div class="csub">Debts ${fmt0(now.debt)} · Other ${fmt0(now.liab)}</div></div>
       <div class="card sc"><div class="cicon" style="background:#F1ECF5">⚖️</div><div class="clabel">Debt Ratio</div><div class="cval">${now.assets?Math.round(now.liabilities/now.assets*100):0}%</div><div class="csub">Liabilities ÷ assets</div></div>
@@ -1182,7 +1218,7 @@ function editDebt(id){
   const d=trk.debts.find(x=>x.id===id)||{name:'',type:'Credit Card',startBal:'',rate:'',pay:'',dueDay:15,charges:0};
   openForm(id?'✏️ Edit Debt':'➕ Add Debt',[
     {k:'name',label:'Debt name'},{k:'type',label:'Type',type:'select',options:['Credit Card','Personal Loan','Car Loan','Housing Loan','Family/Friend','BNPL (Atome/BillEase)','Government (SSS/Pag-IBIG)','Other']},
-    {k:'startBal',label:'Balance on Jan 1, 2027 (₱)',type:'number'},{k:'pay',label:'Monthly payment (₱)',type:'number'},
+    {k:'startBal',label:'Balance on Nov 1, 2026 (₱)',type:'number'},{k:'pay',label:'Monthly payment (₱)',type:'number'},
     {k:'rate',label:'Interest % per month',type:'number',hint:'Example: 3 for 3% a month. Leave 0 if none.'},
     {k:'dueDay',label:'Due day of the month',type:'number'},
     {k:'charges',label:'New charges / interest added this year (₱)',type:'number',hint:'Adds to the balance. Use ＋ Charge on the card to add more later.'}],d,
@@ -1194,7 +1230,7 @@ function editDebt(id){
 }
 function editAccount(id){
   const a=trk.accounts.find(x=>x.id===id)||{name:'',purpose:'',opening:0};
-  openForm(id?'✏️ Edit Account':'➕ Add Account',[{k:'name',label:'Bank / wallet',ph:'e.g. GCash'},{k:'purpose',label:'Purpose',ph:'e.g. Savings Account'},{k:'opening',label:'Balance on Jan 1, 2027 (₱)',type:'number'}],a,
+  openForm(id?'✏️ Edit Account':'➕ Add Account',[{k:'name',label:'Bank / wallet',ph:'e.g. GCash'},{k:'purpose',label:'Purpose',ph:'e.g. Savings Account'},{k:'opening',label:'Balance on Nov 1, 2026 (₱)',type:'number'}],a,
     v=>{if(!v.name.trim()){alert('Please enter a name.');return false;}
       const na={id:a.id||uid(),name:v.name.trim(),purpose:v.purpose.trim(),opening:parseFloat(v.opening)||0};
       if(id){renameLinked(a.name,na.name,null,'acct');Object.assign(a,na);}else trk.accounts.push(na);
@@ -1253,10 +1289,10 @@ function updateSubcatDropdown(keep){
 }
 function acctOptions(sel,blank){return (blank?'<option value="">— none —</option>':'')+trk.accounts.map(a=>`<option value="${esc(a.name)}"${a.name===sel?' selected':''}>${esc(acctLabel(a))}</option>`).join('');}
 function openTxModal(key,pre={}){
-  modalKey=key||(pre.date?MKEYS[+pre.date.slice(5,7)-1]:activeKey);
+  modalKey=key||(pre.date&&keyForDate(pre.date))||activeKey;
   const m=MONTHS[monthIdx(modalKey)],d=new Date();
-  const inMonth=d.getFullYear()===YEAR&&d.getMonth()+1===m.num;
-  document.getElementById('f-date').value=pre.date||`${YEAR}-${pad(m.num)}-${inMonth?pad(d.getDate()):'01'}`;
+  const inMonth=d.getFullYear()===m.year&&d.getMonth()+1===m.num;
+  document.getElementById('f-date').value=pre.date||`${m.year}-${pad(m.num)}-${inMonth?pad(d.getDate()):'01'}`;
   document.getElementById('f-amt').value=pre.amount??'';
   document.getElementById('f-desc').value=pre.desc||'';
   document.getElementById('f-note').value='';
@@ -1283,7 +1319,7 @@ async function saveTx(){
   const note=document.getElementById('f-note').value.trim();
   if(!date||!amount){alert('Please enter a date and amount.');return;}
   if(category==='Transfer'&&(!toAccount||toAccount===account)){alert('Pick the account the money moved to.');return;}
-  const key=date.startsWith(String(YEAR))?MKEYS[+date.slice(5,7)-1]:(modalKey||activeKey);
+  const key=keyForDate(date)||modalKey||activeKey;
   const tx={id:uid(),date,desc,amount,category,subcategory,account,toAccount,note};
   (extraTx[key]=extraTx[key]||[]).push(tx);
   lastAccount=account;saveLocal();closeTxModal();render();
