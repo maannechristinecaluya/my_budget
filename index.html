@@ -286,7 +286,7 @@ table.txt tr:hover td,.sptable tr:hover td{background:#FCF7F5;}
   <div class="hdr-top">
     <div class="logo">
       <div class="logo-icon">🌿</div>
-      <div><h1>My Budget Tracker</h1><p>Philippine Peso (&#8369;) &middot; Nov 2026 – Dec 2027</p></div>
+      <div><h1>My Budget Tracker</h1><p>Philippine Peso (&#8369;) &middot; 2027</p></div>
     </div>
     <div class="hdr-right">
       <div id="sync-status" style="display:flex;align-items:center;padding:4px 10px;background:rgba(255,255,255,.1);border-radius:8px"><span style="color:rgba(255,255,255,.5);font-size:11px;font-weight:600">☁️ Loading…</span></div>
@@ -356,7 +356,6 @@ const NOTION = {
 };
 
 const MONTHS = [
-  {key:"11-Nov-26",name:"Nov 2026",num:11,year:2026,short:"Nov '26"},{key:"12-Dec-26",name:"Dec 2026",num:12,year:2026,short:"Dec '26"},
   {key:"01-Jan",name:"January",num:1},{key:"02-Feb",name:"February",num:2},
   {key:"03-Mar",name:"March",num:3},{key:"04-Apr",name:"April",num:4},
   {key:"05-May",name:"May",num:5},{key:"06-Jun",name:"June",num:6},
@@ -366,7 +365,7 @@ const MONTHS = [
 ].map(m=>Object.assign({year:YEAR,short:m.name.slice(0,3)},m));
 const LAST = MONTHS.length-1;  // index of the last month (Dec 2027)
 const CAL_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const PERIOD = "Nov 2026 – Dec 2027";
+const PERIOD = "2027";
 // month key for a date like 2026-11-05 (null if outside the tracker)
 const pad=n=>String(n).padStart(2,'0');
 function keyForDate(date){const y=+String(date).slice(0,4),m=+String(date).slice(5,7);const f=MONTHS.find(x=>x.year===y&&x.num===m);return f?f.key:null;}
@@ -877,7 +876,7 @@ function renderYTD(){
   const monthsWithData=MKEYS.filter(k=>(extraTx[k]||[]).length).length;
   document.getElementById('main').innerHTML=`
     <div class="ytd-ttl">OVERVIEW · ${PERIOD} &middot; ${monthsWithData} MONTH${monthsWithData===1?'':'S'} WITH DATA</div>
-    ${renderCards(totA,totB,openingCash(),'Opening balances, Nov 1, 2026')}
+    ${renderCards(totA,totB,openingCash(),'Opening balances, Jan 1, 2027')}
     <div class="ccrd fw" style="margin-bottom:22px"><div class="ctitle">Monthly Trend</div><div class="csub2">Income, spending and savings across all months</div><div class="cwrap" style="height:260px"><canvas id="ch-trend"></canvas></div></div>
     <div class="crow" style="margin-bottom:22px">
       <div class="ccrd"><div class="ctitle">YTD Budget vs. Actual</div><div class="csub2">Cumulative across all months</div><div class="cwrap" style="height:220px"><canvas id="ch-bar-ytd"></canvas></div></div>
@@ -929,7 +928,7 @@ function renderPlanner(){
     </div>
     <div class="plan-save-row">
       <button class="plan-reset-btn" onclick="resetPlan('${key}')">&#8617; Reset to Default</button>
-      ${idx<LAST?`<button class="plan-copy-btn" onclick="copyPlanForward('${key}')">&#128203; Copy to ${MONTHS[idx+1].short}–Dec 2027</button>`:''}
+      ${idx<LAST?`<button class="plan-copy-btn" onclick="copyPlanForward('${key}')">&#128203; Copy to ${MONTHS[idx+1].name}–December</button>`:''}
       <button class="plan-save-btn" onclick="savePlan('${key}')">&#128190; Save Plan</button>
     </div>`;
 }
@@ -1051,7 +1050,7 @@ function renderDebts(){
       <div class="dc-top"><div><div class="dc-name">${esc(d.name)}</div><div class="dc-meta">${esc(d.type||'Debt')}${d.dueDay?' · due every '+ord(+d.dueDay):''}</div></div></div>
       <div class="dc-bal ${bal<=0?'zero':''}">${unset?'<span style="font-size:14px;color:var(--txm)">Set the starting balance ✏️</span>':fmt(bal)}</div>
       <div class="dc-sub">${unset?'':`remaining of ${fmt0(total)}`}</div>
-      <div class="pbar"><div style="width:${p}%"></div></div><div class="dc-sub">${p}% paid · ${fmt0(paid)} paid since Nov 2026</div>
+      <div class="pbar"><div style="width:${p}%"></div></div><div class="dc-sub">${p}% paid · ${fmt0(paid)} paid in 2027</div>
       <div class="dc-stats">
         <div class="dc-stat"><div class="l">Monthly payment</div><div class="v">${d.pay?fmt0(d.pay):'—'}</div></div>
         <div class="dc-stat"><div class="l">Interest / month</div><div class="v">${d.rate?d.rate+'%':'0%'}</div></div>
@@ -1067,7 +1066,7 @@ function renderDebts(){
       <button class="abtn" onclick="editDebt()">&#65291; Add Debt</button></div></div>
     <div class="sgrid">
       <div class="card sc"><div class="cicon" style="background:#F9E6E8">💳</div><div class="clabel">Total Debt Left</div><div class="cval ${totBal>0?'neg':'pos'}">${fmt(totBal)}</div><div class="csub">${active.length} active debt${active.length===1?'':'s'}</div></div>
-      <div class="card sc"><div class="cicon" style="background:#EEF1E8">✅</div><div class="clabel">Paid since Nov 2026</div><div class="cval pos">${fmt(totPaid)}</div><div class="csub">${pct}% of what you owed</div></div>
+      <div class="card sc"><div class="cicon" style="background:#EEF1E8">✅</div><div class="clabel">Paid in 2027</div><div class="cval pos">${fmt(totPaid)}</div><div class="csub">${pct}% of what you owed</div></div>
       <div class="card sc"><div class="cicon" style="background:#F5ECE1">📆</div><div class="clabel">Monthly Payments</div><div class="cval">${fmt(minPay)}</div><div class="csub">Across active debts</div></div>
       <div class="card sc"><div class="cicon" style="background:#F6E8EC">🎯</div><div class="clabel">Progress</div><div class="cval">${pct}%</div><div class="csub"><div class="pbar" style="flex:1;margin:0"><div style="width:${pct}%"></div></div></div></div>
       <div class="card sc" style="border:2px solid var(--g3)"><div class="cicon" style="background:#F1ECF5">🕊️</div><div class="clabel">Debt-free by</div><div class="cval" style="font-size:19px">${never?'Pay more':freeDate?freeDate.toLocaleDateString('en-PH',{month:'long',year:'numeric'}):totBal<=0&&totStart>0?'Debt-free! 🎉':'—'}</div><div class="csub">At your current payments</div></div>
@@ -1109,7 +1108,7 @@ function renderAccounts(){
     <div class="dgrid" style="grid-template-columns:repeat(${Math.min(4,Math.max(1,accs.length))},1fr)">${accs.map((x,i)=>`
       <div class="dcard"><div class="dc-top"><div><div class="dc-name">${icons[i%icons.length]} ${esc(x.a.name)}</div><div class="dc-meta">${esc(x.a.purpose||'')}</div></div><button class="nm-ed" onclick="editAccount('${x.a.id}')">&#9998;</button></div>
         <div class="dc-bal" style="color:${x.bal>=0?'var(--g1)':'var(--rd)'}">${fmtS(x.bal)}</div><div class="dc-sub">${total>0&&x.bal>0?Math.round(x.bal/total*100)+'% of your cash':''}</div>
-        <div class="dc-stats"><div class="dc-stat"><div class="l">Opening (Nov 1)</div><div class="v">${fmt0(x.a.opening)}</div></div><div class="dc-stat"><div class="l">Money in</div><div class="v" style="color:var(--sage)">+${fmt0(x.inn+x.tin)}</div></div>
+        <div class="dc-stats"><div class="dc-stat"><div class="l">Opening (Jan 1)</div><div class="v">${fmt0(x.a.opening)}</div></div><div class="dc-stat"><div class="l">Money in</div><div class="v" style="color:var(--sage)">+${fmt0(x.inn+x.tin)}</div></div>
         <div class="dc-stat"><div class="l">Money out</div><div class="v" style="color:var(--rd)">−${fmt0(x.out)}</div></div><div class="dc-stat"><div class="l">Transactions</div><div class="v">${allTx().filter(t=>t.account===x.a.name||t.toAccount===x.a.name).length}</div></div></div>
         <div class="dc-btns"><button class="pri" onclick="openTxModal(null,{account:'${jsq(x.a.name)}'})">＋ Transaction</button><button onclick="txSearch='${jsq(x.a.name)}';setView('ytd')">View activity</button></div></div>`).join('')}</div>
     <div class="ccrd"><div class="ctitle">Balances Through the Year</div><div class="csub2">Month-end balance of each account</div><div class="cwrap" style="height:260px"><canvas id="ch-acct"></canvas></div></div>`;
@@ -1118,7 +1117,7 @@ function renderAccounts(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:11},boxWidth:10}},tooltip:{callbacks:{label:tip}}},scales:{y:{ticks:{callback:peso,font:{size:10}}},x:{grid:{display:false}}}}});},50);
 }
 function editOpenings(){
-  openForm('✏️ Opening balances (Nov 1, 2026)',trk.accounts.map(a=>({k:a.id,label:acctLabel(a),type:'number'})),
+  openForm('✏️ Opening balances (Jan 1, 2027)',trk.accounts.map(a=>({k:a.id,label:acctLabel(a),type:'number'})),
     Object.fromEntries(trk.accounts.map(a=>[a.id,a.opening||0])),
     v=>{trk.accounts.forEach(a=>a.opening=parseFloat(v[a.id])||0);saveTrackers();showToast('Opening balances saved');render();});
 }
@@ -1142,7 +1141,7 @@ function renderNetWorth(){
     <div class="sec-hdr"><div><div class="sec-title">📈 Net Worth</div><div class="sec-hint">What you own minus what you owe. Accounts and debts update on their own; update other assets now and then.</div></div>
       <div class="btnrow"><button class="abtn" onclick="editAsset()">&#65291; Add Asset / Liability</button></div></div>
     <div class="sgrid" style="grid-template-columns:repeat(4,1fr)">
-      <div class="card sc" style="border:2px solid var(--g3)"><div class="cicon" style="background:#F6E8EC">🌸</div><div class="clabel">Net Worth</div><div class="cval ${now.net>=0?'pos':'neg'}" style="font-size:26px">${fmtS(now.net)}</div><div class="csub"><span class="badge ${change>=0?'bg':'br'}">${change>=0?'▲':'▼'} ${fmt0(Math.abs(change))}</span> since Nov 1, 2026</div></div>
+      <div class="card sc" style="border:2px solid var(--g3)"><div class="cicon" style="background:#F6E8EC">🌸</div><div class="clabel">Net Worth</div><div class="cval ${now.net>=0?'pos':'neg'}" style="font-size:26px">${fmtS(now.net)}</div><div class="csub"><span class="badge ${change>=0?'bg':'br'}">${change>=0?'▲':'▼'} ${fmt0(Math.abs(change))}</span> since Jan 1, 2027</div></div>
       <div class="card sc"><div class="cicon" style="background:#EEF1E8">🏦</div><div class="clabel">Total Assets</div><div class="cval pos">${fmt(now.assets)}</div><div class="csub">Cash ${fmt0(now.cash)} · Other ${fmt0(now.other)}</div></div>
       <div class="card sc"><div class="cicon" style="background:#F9E6E8">💳</div><div class="clabel">Total Liabilities</div><div class="cval neg">${fmt(now.liabilities)}</div><div class="csub">Debts ${fmt0(now.debt)} · Other ${fmt0(now.liab)}</div></div>
       <div class="card sc"><div class="cicon" style="background:#F1ECF5">⚖️</div><div class="clabel">Debt Ratio</div><div class="cval">${now.assets?Math.round(now.liabilities/now.assets*100):0}%</div><div class="csub">Liabilities ÷ assets</div></div>
@@ -1218,7 +1217,7 @@ function editDebt(id){
   const d=trk.debts.find(x=>x.id===id)||{name:'',type:'Credit Card',startBal:'',rate:'',pay:'',dueDay:15,charges:0};
   openForm(id?'✏️ Edit Debt':'➕ Add Debt',[
     {k:'name',label:'Debt name'},{k:'type',label:'Type',type:'select',options:['Credit Card','Personal Loan','Car Loan','Housing Loan','Family/Friend','BNPL (Atome/BillEase)','Government (SSS/Pag-IBIG)','Other']},
-    {k:'startBal',label:'Balance on Nov 1, 2026 (₱)',type:'number'},{k:'pay',label:'Monthly payment (₱)',type:'number'},
+    {k:'startBal',label:'Balance on Jan 1, 2027 (₱)',type:'number'},{k:'pay',label:'Monthly payment (₱)',type:'number'},
     {k:'rate',label:'Interest % per month',type:'number',hint:'Example: 3 for 3% a month. Leave 0 if none.'},
     {k:'dueDay',label:'Due day of the month',type:'number'},
     {k:'charges',label:'New charges / interest added this year (₱)',type:'number',hint:'Adds to the balance. Use ＋ Charge on the card to add more later.'}],d,
@@ -1230,7 +1229,7 @@ function editDebt(id){
 }
 function editAccount(id){
   const a=trk.accounts.find(x=>x.id===id)||{name:'',purpose:'',opening:0};
-  openForm(id?'✏️ Edit Account':'➕ Add Account',[{k:'name',label:'Bank / wallet',ph:'e.g. GCash'},{k:'purpose',label:'Purpose',ph:'e.g. Savings Account'},{k:'opening',label:'Balance on Nov 1, 2026 (₱)',type:'number'}],a,
+  openForm(id?'✏️ Edit Account':'➕ Add Account',[{k:'name',label:'Bank / wallet',ph:'e.g. GCash'},{k:'purpose',label:'Purpose',ph:'e.g. Savings Account'},{k:'opening',label:'Balance on Jan 1, 2027 (₱)',type:'number'}],a,
     v=>{if(!v.name.trim()){alert('Please enter a name.');return false;}
       const na={id:a.id||uid(),name:v.name.trim(),purpose:v.purpose.trim(),opening:parseFloat(v.opening)||0};
       if(id){renameLinked(a.name,na.name,null,'acct');Object.assign(a,na);}else trk.accounts.push(na);
